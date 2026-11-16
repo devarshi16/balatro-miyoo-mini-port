@@ -530,12 +530,16 @@ fn run_inner_with_vt<B: Backend>(
             .map_err(|error| anyhow::anyhow!("install save bridge: {error}"))?;
         eprintln!("[filesystem] synchronous save bridge installed");
 
-        // After love.run() initializes the game, disable shadows globally.
+        // After love.run() initializes the game, disable shadows globally and
+        // apply any saved Miyoo performance preset from G.SETTINGS.
         // G.SETTINGS is now populated by the game's init code.
         lua.load(
             r#"
             if G and G.SETTINGS and G.SETTINGS.GRAPHICS then
                 G.SETTINGS.GRAPHICS.shadows = 'Off'
+            end
+            if G and G.SVMM_apply_saved_preset then
+                G.SVMM_apply_saved_preset()
             end
         "#,
         )
@@ -748,6 +752,7 @@ fn run_frame_loop<B: Backend>(
             Ok("splash-skip") => Some(include_str!("replays/splash_skip.lua")),
             Ok("pack-open") => Some(include_str!("replays/pack_open.lua")),
             Ok("boss-warning") => Some(include_str!("replays/boss_warning.lua")),
+            Ok("graphics-preset") => Some(include_str!("replays/graphics_preset.lua")),
             _ => None,
         };
         script

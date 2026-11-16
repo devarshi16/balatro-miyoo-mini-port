@@ -40,6 +40,25 @@ reset_case
 sh "$WORK/game/script.sh"
 [ ! -s "$WORK/changes" ]
 
+# Normal ondemand scaling without a runtime clock call does not trigger a restore.
+reset_case
+printf '600\n' >"$WORK/frequency"
+CLOCK_TEST_GAME=ondemand-scale sh "$WORK/game/script.sh"
+[ ! -s "$WORK/changes" ]
+[ "$(cat "$WORK/governor")" = ondemand ]
+
+# Runtime-initiated clock changes are still restored on exit when BALATRO_CPU_MHZ is unset.
+reset_case
+CLOCK_TEST_GAME=runtime-clock sh "$WORK/game/script.sh"
+check_restored
+
+# Returning to 1200 in-game still restores the original governor on exit.
+reset_case
+CLOCK_TEST_GAME=runtime-clock-eco sh "$WORK/game/script.sh"
+[ "$(cat "$WORK/frequency")" = 1200 ]
+[ "$(cat "$WORK/governor")" = ondemand ]
+[ "$(cat "$WORK/changes")" = "$(printf '1500\n1200\n1200')" ]
+
 export BALATRO_CPU_MHZ=1500
 reset_case
 sh "$WORK/game/script.sh"

@@ -7,6 +7,7 @@ SYSTEM_DIR=${BALATRO_SYSTEM_DIR:-/mnt/SDCARD/.tmp_update}
 SAVE_DIR=${BALATRO_SAVE_DIR:-/mnt/SDCARD/Saves/CurrentProfile/saves/Balatro}
 CPU_CLOCK=$SYSTEM_DIR/bin/cpuclock
 CPU_GOVERNOR=${BALATRO_CPU_GOVERNOR_FILE:-/sys/devices/system/cpu/cpufreq/policy0/scaling_governor}
+CPU_MARKER=${BALATRO_CLOCK_MARKER:-${TMPDIR:-/tmp}/balatro-clock-$$}
 CPU_INITIAL=
 GOVERNOR_INITIAL=
 CPU_CHANGED=0
@@ -17,6 +18,12 @@ exec 2>"$SAVE_DIR/launcher.log"
 
 # Invoked by the trap below.
 # shellcheck disable=SC2317,SC2329
+clock_needs_restore() {
+    [ "$CPU_CHANGED" = 1 ] || [ -e "$CPU_MARKER" ]
+}
+
+# Invoked by the trap below.
+# shellcheck disable=SC2317,SC2329
 finish() {
     result=$?
     trap - EXIT INT TERM
@@ -24,18 +31,19 @@ finish() {
         kill -TERM "$GAME_PID" 2>/dev/null || true
         wait "$GAME_PID" 2>/dev/null || true
     fi
-    if [ "$CPU_CHANGED" = 1 ]; then
-        if restored=$("$CPU_CLOCK" "$CPU_INITIAL"); then
+    if clock_needs_restore; then
+        if [ -n "$CPU_INITIAL" ] && restored=$("$CPU_CLOCK" "$CPU_INITIAL"); then
             echo "Clock restored: $restored MHz (was $CPU_INITIAL MHz)" >&2
         else
             echo 'Could not restore the CPU clock' >&2
         fi
-        if printf '%s\n' "$GOVERNOR_INITIAL" >"$CPU_GOVERNOR"; then
+        if [ -n "$GOVERNOR_INITIAL" ] && printf '%s\n' "$GOVERNOR_INITIAL" >"$CPU_GOVERNOR"; then
             echo "Governor restored: $GOVERNOR_INITIAL" >&2
         else
             echo 'Could not restore the CPU governor' >&2
         fi
     fi
+    rm -f "$CPU_MARKER"
     echo "Game exited: $result" >&2
     exit "$result"
 }
@@ -43,30 +51,40 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-set_clock() {
-    target=${BALATRO_CPU_MHZ:-off}
-    [ "$target" != off ] || return 0
-    case "$target" in
-        ''|*[!0-9]*) echo 'BALATRO_CPU_MHZ must be off or 1200-1600' >&2; return 1 ;;
-    esac
-    if [ "$target" -lt 1200 ] || [ "$target" -gt 1600 ]; then
-        echo 'BALATRO_CPU_MHZ must be off or 1200-1600' >&2
+capture_clock_state() {
+    if [ ! -x "$CPU_CLOCK" ] || [ ! -r "$CPU_GOVERNOR" ] || [ ! -w "$CPU_GOVERNOR" ]; then
         return 1
     fi
-    if [ ! -x "$CPU_CLOCK" ] || [ ! -r "$CPU_GOVERNOR" ] || [ ! -w "$CPU_GOVERNOR" ]; then
-        echo 'Clock unchanged: Onion clock controls unavailable' >&2
-        return 0
-    fi
-    if ! CPU_INITIAL=$("$CPU_CLOCK") || ! GOVERNOR_INITIAL=$(cat "$CPU_GOVERNOR"); then
-        echo 'Clock unchanged: could not read the original settings' >&2
-        return 0
+    if ! CPU_INITIAL=$("$CPU_CLOCK" 2>/dev/null) || ! GOVERNOR_INITIAL=$(cat "$CPU_GOVERNOR" 2>/dev/null); then
+        CPU_INITIAL=
+        GOVERNOR_INITIAL=
+        return 1
     fi
     case "$CPU_INITIAL:$GOVERNOR_INITIAL" in
-        *[!0-9a-zA-Z_:-]*|:*|*:) echo 'Clock unchanged: invalid original settings' >&2; return 0 ;;
+        *[!0-9a-zA-Z_:-]*|:*|*:) CPU_INITIAL=; GOVERNOR_INITIAL=; return 1 ;;
     esac
     case "$CPU_INITIAL" in
-        *[!0-9]*) echo 'Clock unchanged: invalid original frequency' >&2; return 0 ;;
+        *[!0-9]*) CPU_INITIAL=; GOVERNOR_INITIAL=; return 1 ;;
     esac
+    return 0
+}
+
+set_clock() {
+    target=${BALATRO_CPU_MHZ:-off}
+    if [ "$target" != off ]; then
+        case "$target" in
+            ''|*[!0-9]*) echo 'BALATRO_CPU_MHZ must be off or 1200-1600' >&2; return 1 ;;
+        esac
+        if [ "$target" -lt 1200 ] || [ "$target" -gt 1600 ]; then
+            echo 'BALATRO_CPU_MHZ must be off or 1200-1600' >&2
+            return 1
+        fi
+    fi
+    if ! capture_clock_state; then
+        [ "$target" = off ] || echo 'Clock unchanged: Onion clock controls unavailable' >&2
+        return 0
+    fi
+    [ "$target" != off ] || return 0
     CPU_CHANGED=1
     if reported=$("$CPU_CLOCK" "$target"); then
         echo "Clock: $reported MHz (requested $target, original $CPU_INITIAL)" >&2
@@ -76,6 +94,9 @@ set_clock() {
 }
 set_clock || exit 1
 
+export BALATRO_SYSTEM_DIR="$SYSTEM_DIR"
+export BALATRO_CPU_GOVERNOR_FILE="$CPU_GOVERNOR"
+export BALATRO_CLOCK_MARKER="$CPU_MARKER"
 export BALATRO_PLATFORM=miyoo
 export BALATRO_RENDER_WIDTH="${BALATRO_RENDER_WIDTH:-640}"
 export BALATRO_RENDER_HEIGHT="${BALATRO_RENDER_HEIGHT:-480}"

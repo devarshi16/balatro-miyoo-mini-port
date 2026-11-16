@@ -1178,3 +1178,85 @@ function create_UIBox_notify_alert(...)
     fit_banner(result)
     return result
 end
+
+local MIYOO_PRESETS = {
+    {id = 'eco', mhz = 1200, label = 'Eco 1200 MHz'},
+    {id = 'performance', mhz = 1500, label = 'Performance 1500 MHz'},
+}
+local MIYOO_PRESET_OPTIONS = {MIYOO_PRESETS[1].label, MIYOO_PRESETS[2].label}
+
+local function miyoo_preset_by_id(id)
+    for i, preset in ipairs(MIYOO_PRESETS) do
+        if preset.id == id then return i, preset end
+    end
+    return 1, MIYOO_PRESETS[1]
+end
+
+local function env_cpu_mhz_override()
+    local raw = os.getenv('BALATRO_CPU_MHZ')
+    if not raw or raw == '' or raw == 'off' then return nil end
+    return tonumber(raw)
+end
+
+local function current_miyoo_preset_index()
+    local graphics = G and G.SETTINGS and G.SETTINGS.GRAPHICS
+    local saved = graphics and graphics.miyoo_preset
+    if saved then
+        local index = miyoo_preset_by_id(saved)
+        return index
+    end
+    local override = env_cpu_mhz_override()
+    if override and override >= 1500 then
+        return 2
+    end
+    return 1
+end
+
+local function apply_cpu_clock_mhz(mhz)
+    if love and love.system and love.system._setCpuClock then
+        love.system._setCpuClock(mhz)
+    end
+end
+
+function G.SVMM_apply_saved_preset()
+    G.SETTINGS = G.SETTINGS or {}
+    G.SETTINGS.GRAPHICS = G.SETTINGS.GRAPHICS or {}
+    local saved = G.SETTINGS.GRAPHICS.miyoo_preset
+    local _, preset = miyoo_preset_by_id(saved)
+    if not saved then
+        G.SETTINGS.GRAPHICS.miyoo_preset = preset.id
+    end
+    if env_cpu_mhz_override() then return end
+    if preset.id ~= 'eco' then
+        apply_cpu_clock_mhz(preset.mhz)
+    end
+end
+
+G.FUNCS.change_miyoo_preset = function(args)
+    local index = (args and args.to_key) or 1
+    local preset = MIYOO_PRESETS[index] or MIYOO_PRESETS[1]
+    G.SETTINGS = G.SETTINGS or {}
+    G.SETTINGS.GRAPHICS = G.SETTINGS.GRAPHICS or {}
+    G.SETTINGS.GRAPHICS.miyoo_preset = preset.id
+    apply_cpu_clock_mhz(preset.mhz)
+    if G.save_settings then G:save_settings() end
+    if G.FILE_HANDLER then G.FILE_HANDLER.force = true end
+end
+
+local original_settings_tab = G.UIDEF and G.UIDEF.settings_tab
+if original_settings_tab then
+    function G.UIDEF.settings_tab(tab)
+        local result = original_settings_tab(tab)
+        if tab == 'Graphics' and result and result.nodes then
+            table.insert(result.nodes, 1, create_option_cycle({
+                w = 5,
+                scale = 0.8,
+                label = 'Preset',
+                options = MIYOO_PRESET_OPTIONS,
+                opt_callback = 'change_miyoo_preset',
+                current_option = current_miyoo_preset_index(),
+            }))
+        end
+        return result
+    end
+end

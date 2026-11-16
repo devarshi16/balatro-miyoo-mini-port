@@ -582,3 +582,111 @@ fn collision_matches_original_game() {
         .unwrap();
     assert_eq!(checked, 124_656);
 }
+
+#[test]
+fn graphics_preset_prepends_above_other_options_and_applies_clock() {
+    let lua = Lua::new();
+    lua.load(
+        r#"
+        clock_calls = {}
+        save_calls = 0
+        env_values = {}
+        os = {getenv = function(key) return env_values[key] end}
+        love = {
+            system = {_setCpuClock = function(mhz) clock_calls[#clock_calls + 1] = mhz end},
+            graphics = {},
+        }
+        Moveable = {extend = function() return {} end}
+        UIBox = {}
+        Card = {}
+        DynaText = {init = function() end}
+        CardArea = {emplace = function() end, move = function() end, draw = function() end}
+        Card_Character = {add_speech_bubble = function() end}
+        Game = {init_window = function() end, set_language = function() end,
+            start_run = function() end, update_shop = function() end,
+            update_round_eval = function() end, update_selecting_hand = function() end,
+            update_blind_select = function() end}
+        function create_UIBox_blind_select() end
+        function create_UIBox_main_menu_buttons() end
+        function create_UIBox_buttons() end
+        function tutorial_info() end
+        function change_shop_size() end
+        function create_UIBox_notify_alert() end
+        function create_option_cycle(args) return {kind = 'option_cycle', args = args} end
+        function create_slider(args) return {kind = 'slider', args = args} end
+        function localize(key) return key end
+
+        G = {
+            CARD_W = 1, CARD_H = 1.4, TILESIZE = 20, TILESCALE = 1,
+            SETTINGS = {GRAPHICS = {shadows = 'Off', texture_scaling = 1, crt = 0, bloom = 1}},
+            FILE_HANDLER = {force = false},
+            FUNCS = {use_card = function() end, flame_handler = function() end,
+                chip_UI_set = function() end, hand_chip_UI_set = function() end,
+                hand_mult_UI_set = function() end},
+            UIDEF = {
+                settings_tab = function(tab)
+                    if tab == 'Graphics' then
+                        return {nodes = {
+                            create_option_cycle({label = 'b_set_shadows', options = {'On', 'Off'}}),
+                            create_option_cycle({label = 'b_set_pixel_smoothing', options = {'Off', 'On'}}),
+                            create_slider({label = 'b_set_CRT'}),
+                            create_option_cycle({label = 'b_set_CRT_bloom', options = {'Off', 'On'}}),
+                        }}
+                    end
+                    return {nodes = {}}
+                end
+            },
+        }
+        function G:save_settings() save_calls = save_calls + 1 end
+        "#,
+    )
+    .exec()
+    .unwrap();
+    lua.load(crate::state::MIYOO_SMALL_SCREEN_PATCH)
+        .exec()
+        .unwrap();
+    lua.load(
+        r#"
+        -- Fresh install defaults to Eco 1200 MHz without calling cpuclock unnecessarily.
+        G.SVMM_apply_saved_preset()
+        assert(G.SETTINGS.GRAPHICS.miyoo_preset == 'eco')
+        assert(#clock_calls == 0)
+
+        local tab = G.UIDEF.settings_tab('Graphics')
+        assert(#tab.nodes == 5)
+        local preset_node = tab.nodes[1]
+        assert(preset_node.kind == 'option_cycle')
+        assert(preset_node.args.label == 'Preset')
+        assert(preset_node.args.options[1] == 'Eco 1200 MHz')
+        assert(preset_node.args.options[2] == 'Performance 1500 MHz')
+        assert(preset_node.args.current_option == 1)
+        assert(tab.nodes[2].args.label == 'b_set_shadows')
+
+        -- Switching to Performance applies 1500 MHz immediately and forces settings save.
+        G.FUNCS.change_miyoo_preset({to_key = 2})
+        assert(G.SETTINGS.GRAPHICS.miyoo_preset == 'performance')
+        assert(clock_calls[1] == 1500)
+        assert(save_calls == 1 and G.FILE_HANDLER.force == true)
+        assert(G.UIDEF.settings_tab('Graphics').nodes[1].args.current_option == 2)
+
+        -- Startup reapplies Performance (1500 MHz) when saved in settings.jkr.
+        G.SVMM_apply_saved_preset()
+        assert(clock_calls[2] == 1500)
+
+        -- Explicit BALATRO_CPU_MHZ override is not clobbered on startup.
+        env_values.BALATRO_CPU_MHZ = '1600'
+        G.SVMM_apply_saved_preset()
+        assert(#clock_calls == 2)
+        env_values.BALATRO_CPU_MHZ = nil
+
+        -- Switching back to Eco applies 1200 MHz live.
+        G.FILE_HANDLER.force = false
+        G.FUNCS.change_miyoo_preset({to_key = 1})
+        assert(G.SETTINGS.GRAPHICS.miyoo_preset == 'eco')
+        assert(clock_calls[3] == 1200)
+        assert(save_calls == 2 and G.FILE_HANDLER.force == true)
+        "#,
+    )
+    .exec()
+    .unwrap();
+}

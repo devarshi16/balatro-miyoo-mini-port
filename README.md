@@ -22,7 +22,9 @@ audio; let it finish. If interrupted, launch again to resume.
 Saves are stored in `Saves/CurrentProfile/saves/Balatro`. Back them up before
 updating.
 
-The launcher keeps the stock CPU clock. To overclock, set `BALATRO_CPU_MHZ`
+The port keeps the stock 1200 MHz CPU clock (`Eco 1200 MHz`) by default. You can
+switch live between `Eco 1200 MHz` and `Performance 1500 MHz` under Options >
+Settings > Graphics > Preset, or override the launch clock with `BALATRO_CPU_MHZ`
 (1200-1600) in `script.sh`; it uses Onion's clock helper and restores the
 previous clock on exit.
 
